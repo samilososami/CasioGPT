@@ -56,6 +56,7 @@ int main(int argc,char **argv)
     write_ppm(argv[1],"01-splash");
 
     reset_preview();verify_key_state=2;verify_esp_state=2;verify_net_state=1;
+    verify_esp_attempt=3;verify_wifi_attempt=0;verify_net_attempt=7;verify_net_max=10;verify_new_attempt=0;
     render_verify();write_ppm(argv[1],"02-verification");
 
     set_pair("Resuelve 2(x - 3) + 4 = 3x - 5.",

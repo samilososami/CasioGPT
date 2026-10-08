@@ -39,10 +39,20 @@ para permitir reconexión. En la configuración actual esa NVS no está cifrada.
 ## Fallos y recuperación
 
 - La UI nunca espera bloqueada a una única lectura UART.
-- Las peticiones se reintentan conservando el ID.
-- A mitad de los reintentos se reabre el puerto serie local.
+- La comprobación inicial separa enlace ESP32, asociación Wi-Fi, salida HTTPS e
+  inicio de sesión; cada fase transitoria dispone de hasta diez intentos.
+- Cada intento de enlace reabre la UART local y cada frame tiene retransmisión
+  interna acotada, sin congelar el bucle gráfico.
+- La pantalla muestra el intento actual (`N/10`) para distinguir una
+  recuperación en curso de un bloqueo.
+- Si HTTPS detecta que el Wi-Fi cayó, CasioGPT vuelve una vez a la fase de
+  asociación antes de declarar el fallo definitivo.
 - Offsets inesperados y frames dañados se rechazan.
 - F6 envía una cancelación y el cierre del add-in realiza una cancelación de
   mejor esfuerzo antes de cerrar UART.
 - La detección local de secretos falla el test si encuentra una API key en
   fuentes, documentación o binarios.
+
+La batería de host fuerza nueve fallos y recuperación en el décimo intento,
+además del caso de agotamiento completo. Esto valida el estado y el protocolo;
+la estabilidad eléctrica del enlace soldado solo puede confirmarse en hardware.

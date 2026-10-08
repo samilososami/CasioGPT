@@ -261,18 +261,28 @@ static void status_row(int y,const char *label,int state,int phase)
     mini_text(58,y+2,label,state==2?COL_TEXT:state<0?COL_RED:COL_MUTED);
 }
 static int verify_key_state,verify_esp_state,verify_net_state;
+static int verify_esp_attempt,verify_wifi_attempt,verify_net_attempt,verify_net_max=10,verify_new_attempt;
 static void render_verify(void)
 {
+    char esp_label[72],net_label[72];
     int phase=(RTC_GetTicks()/64)%3;
+    if(verify_esp_state==2)str_copy(esp_label,sizeof(esp_label),"ESP32 verificada");
+    else if(verify_esp_attempt>0)sprintf(esp_label,"ESP32: intento %d/10",verify_esp_attempt);
+    else str_copy(esp_label,sizeof(esp_label),"Verificando conexion con ESP32");
+    if(verify_net_state==2)str_copy(net_label,sizeof(net_label),"Internet verificado");
+    else if(verify_wifi_attempt>0)sprintf(net_label,"Esperando Wi-Fi %d/10",verify_wifi_attempt);
+    else if(verify_net_attempt>0)sprintf(net_label,"Internet: intento %d/%d",verify_net_attempt,verify_net_max);
+    else str_copy(net_label,sizeof(net_label),"Verificando conexion a internet");
     Bdisp_Fill_VRAM(COL_BG,1);draw_header();
     mini_bold(24,44,"Preparando CasioGPT",COL_TEXT);
     mini_text(24,62,"Comprobaciones locales y de red",COL_MUTED);
     status_row(87,"Validando casiogpt_api.txt",verify_key_state,phase);
-    status_row(119,verify_esp_state==2?"ESP32 verificada":"Verificando conexion con ESP32",verify_esp_state,phase);
-    status_row(151,verify_net_state==2?"Internet verificado":"Verificando conexion a internet",verify_net_state,phase);
+    status_row(119,esp_label,verify_esp_state,phase);
+    status_row(151,net_label,verify_net_state,phase);
     if(app_error[0])mini_text(24,184,app_error,COL_RED);
     if(verify_key_state<0)mini_text(24,200,"Crea el archivo en la raiz y pulsa F1",COL_MUTED);
     else if(verify_esp_state<0||verify_net_state<0)mini_text(24,200,"Pulsa F1 para volver a comprobar",COL_MUTED);
+    else if(verify_esp_attempt>1||verify_wifi_attempt>0||verify_net_attempt>1||verify_new_attempt>1)mini_text(24,200,"Reintentando automaticamente...",COL_MUTED);
     Bdisp_PutDisp_DD();
 }
 
@@ -294,7 +304,8 @@ static int load_api_key(void)
 
 /* ---------- non-blocking UART RPC ---------- */
 typedef struct {
-    int active,queued,waiting,result,attempts,tx_len,tx_offset,tx_at,timeout,bad_frames;
+    int active,queued,waiting,result,attempts,max_attempts,retry_ms,reopen_every;
+    int tx_len,tx_offset,tx_at,timeout,bad_frames;
     unsigned long id,start,request_at;
     char frame[WIRE_CAP],response[WIRE_CAP],expect[20];
     wire_rx rx;
@@ -319,12 +330,17 @@ static int expected_response(const char *line,const char *expect)
     return !strncmp(line,expect,strlen(expect))&&line[strlen(expect)]==':';
 }
 static void rpc_abort(void){memset(&rpc,0,sizeof(rpc));}
-static int rpc_start(const char *payload,unsigned long id,const char *expect,int timeout)
+static int rpc_start_profile(const char *payload,unsigned long id,const char *expect,int timeout,int max_attempts,int retry_ms,int reopen_every)
 {
     rpc_abort();if(!Serial_IsOpen()&&!open_uart())return 0;
     rpc.tx_len=wire_pack(rpc.frame,payload);if(!rpc.tx_len)return 0;
-    rpc.id=id;rpc.active=rpc.queued=1;rpc.timeout=timeout;rpc.start=rpc.request_at=RTC_GetTicks();rpc.tx_at=RTC_GetTicks()-20;
+    rpc.id=id;rpc.active=rpc.queued=1;rpc.timeout=timeout;rpc.max_attempts=max_attempts;rpc.retry_ms=retry_ms;rpc.reopen_every=reopen_every;
+    rpc.start=rpc.request_at=RTC_GetTicks();rpc.tx_at=RTC_GetTicks()-20;
     str_copy(rpc.expect,sizeof(rpc.expect),expect);return 1;
+}
+static int rpc_start(const char *payload,unsigned long id,const char *expect,int timeout)
+{
+    return rpc_start_profile(payload,id,expect,timeout,8,1400,4);
 }
 static void rpc_fail(void){rpc.active=rpc.queued=rpc.waiting=0;rpc.result=-1;esp_ok=0;display_dirty=1;}
 static void rpc_poll(void)
@@ -337,9 +353,9 @@ static void rpc_poll(void)
         } else if(s<0) rpc.bad_frames++;
     }
     if(RTC_Elapsed_ms(rpc.start,rpc.timeout)){rpc_fail();return;}
-    if(rpc.waiting&&RTC_Elapsed_ms(rpc.request_at,1400)){
-        if(rpc.attempts>=8){rpc_fail();return;}
-        if(rpc.attempts==4&&!open_uart()){rpc_fail();return;}
+    if(rpc.waiting&&RTC_Elapsed_ms(rpc.request_at,rpc.retry_ms)){
+        if(rpc.attempts>=rpc.max_attempts){rpc_fail();return;}
+        if(rpc.reopen_every>0&&rpc.attempts%rpc.reopen_every==0&&!open_uart()){rpc_fail();return;}
         rpc.waiting=0;rpc.queued=1;rpc.tx_offset=0;rpc.tx_at=RTC_GetTicks();
     }
     if(rpc.queued&&RTC_Elapsed_ms(rpc.tx_at,12)){
@@ -354,48 +370,125 @@ static unsigned long previous_id;
 static unsigned long new_id(void){unsigned long id=RTC_GetTicks();if(id<=previous_id)id=previous_id+1;previous_id=id;return id;}
 
 /* ---------- verification state ---------- */
-enum { VERIFY_IDLE,VERIFY_ESP,VERIFY_NET_BEGIN,VERIFY_NET_POLL,VERIFY_NEW,VERIFY_READY,VERIFY_FAILED };
-static int verify_stage=VERIFY_IDLE;
-static unsigned long verify_id,verify_poll_at;
+#define VERIFY_MAX_ATTEMPTS 10
+#define VERIFY_RETRY_DELAY 450
+enum { VERIFY_IDLE,VERIFY_ESP,VERIFY_WIFI,VERIFY_NET_BEGIN,VERIFY_NET_POLL,VERIFY_NEW,VERIFY_READY,VERIFY_FAILED };
+static int verify_stage=VERIFY_IDLE,verify_retry_pending,verify_retry_delay,verify_net_transport_failures,verify_wifi_recovery_used;
+static unsigned long verify_id,verify_poll_at,verify_retry_at;
+static int split_response(char *text,char **f,int cap){return wire_split(text,f,cap);}
+static void verify_fail(int esp_row,const char *message)
+{
+    rpc_abort();verify_retry_pending=0;verify_stage=VERIFY_FAILED;
+    if(esp_row)verify_esp_state=-1;else verify_net_state=-1;
+    str_copy(app_error,sizeof(app_error),message);display_dirty=1;
+}
+static void schedule_verify_retry(int stage,int delay)
+{
+    rpc_abort();verify_stage=stage;verify_retry_pending=1;verify_retry_delay=delay;verify_retry_at=RTC_GetTicks();display_dirty=1;
+}
+static int start_verify_rpc(const char *payload,unsigned long id,const char *expect)
+{
+    return rpc_start_profile(payload,id,expect,2300,2,700,1);
+}
+static void start_link_attempt(int stage)
+{
+    int *attempt=stage==VERIFY_ESP?&verify_esp_attempt:&verify_wifi_attempt;
+    const char *failure=stage==VERIFY_ESP?"La ESP32 no responde tras 10 intentos.":"Wi-Fi no se conecto tras 10 intentos.";
+    if(*attempt>=VERIFY_MAX_ATTEMPTS){verify_fail(stage==VERIFY_ESP,failure);return;}
+    (*attempt)++;verify_retry_pending=0;verify_stage=stage;
+    if(stage==VERIFY_ESP){verify_esp_state=1;esp_ok=0;}else verify_net_state=1;
+    display_dirty=1;
+    if(!open_uart()){schedule_verify_retry(stage,VERIFY_RETRY_DELAY);return;}
+    verify_id=new_id();char cmd[48];sprintf(cmd,"STATE:%lu",verify_id);
+    if(!start_verify_rpc(cmd,verify_id,"LINK"))schedule_verify_retry(stage,VERIFY_RETRY_DELAY);
+}
+static void start_net_begin(int fresh)
+{
+    char cmd[48];verify_retry_pending=0;verify_stage=VERIFY_NET_BEGIN;verify_net_state=1;
+    if(fresh){verify_id=new_id();verify_net_transport_failures=0;verify_net_attempt=0;verify_net_max=10;}
+    sprintf(cmd,"NET_BEGIN:%lu",verify_id);
+    if(!start_verify_rpc(cmd,verify_id,"NET"))schedule_verify_retry(VERIFY_NET_BEGIN,VERIFY_RETRY_DELAY);
+}
+static void start_net_get(void)
+{
+    char cmd[48];verify_retry_pending=0;verify_stage=VERIFY_NET_POLL;sprintf(cmd,"NET_GET:%lu",verify_id);
+    if(!start_verify_rpc(cmd,verify_id,"NET"))schedule_verify_retry(VERIFY_NET_POLL,VERIFY_RETRY_DELAY);
+}
+static void start_new_attempt(int fresh)
+{
+    char cmd[48];
+    if(fresh){verify_id=new_id();verify_new_attempt=0;}
+    if(verify_new_attempt>=VERIFY_MAX_ATTEMPTS){verify_fail(0,"No se pudo iniciar la sesion tras 10 intentos.");return;}
+    verify_new_attempt++;verify_retry_pending=0;verify_stage=VERIFY_NEW;display_dirty=1;
+    if(!open_uart()){schedule_verify_retry(VERIFY_NEW,VERIFY_RETRY_DELAY);return;}
+    sprintf(cmd,"GPT_NEW:%lu",verify_id);
+    if(!start_verify_rpc(cmd,verify_id,"GPT_ACK"))schedule_verify_retry(VERIFY_NEW,VERIFY_RETRY_DELAY);
+}
 static void begin_verify(void)
 {
     rpc_abort();app_error[0]=0;internet_ok=wifi_ok=esp_ok=0;
     api_key_len=0;memset(api_key,0,sizeof(api_key));
     verify_key_state=load_api_key()?2:-1;verify_esp_state=verify_net_state=0;
+    verify_esp_attempt=verify_wifi_attempt=verify_net_attempt=verify_new_attempt=0;verify_net_max=10;
+    verify_net_transport_failures=verify_wifi_recovery_used=verify_retry_pending=0;
     if(verify_key_state<0){str_copy(app_error,sizeof(app_error),"Clave ausente o formato no valido.");verify_stage=VERIFY_FAILED;display_dirty=1;return;}
-    if(!open_uart()){verify_esp_state=-1;str_copy(app_error,sizeof(app_error),"No se pudo abrir UART.");verify_stage=VERIFY_FAILED;display_dirty=1;return;}
-    verify_esp_state=1;verify_stage=VERIFY_ESP;verify_id=new_id();char cmd[48];sprintf(cmd,"STATE:%lu",verify_id);
-    if(!rpc_start(cmd,verify_id,"LINK",10000)){verify_esp_state=-1;verify_stage=VERIFY_FAILED;}
-    display_dirty=1;
+    start_link_attempt(VERIFY_ESP);
 }
-static int split_response(char *text,char **f,int cap){return wire_split(text,f,cap);}
+static void retry_current_stage(void)
+{
+    verify_retry_pending=0;
+    if(verify_stage==VERIFY_ESP||verify_stage==VERIFY_WIFI)start_link_attempt(verify_stage);
+    else if(verify_stage==VERIFY_NET_BEGIN)start_net_begin(0);
+    else if(verify_stage==VERIFY_NET_POLL)start_net_get();
+    else if(verify_stage==VERIFY_NEW)start_new_attempt(0);
+}
 static void process_verify(void)
 {
-    if(verify_stage==VERIFY_NET_POLL&&!rpc.active&&!rpc.result&&RTC_Elapsed_ms(verify_poll_at,180)){
-        char cmd[48];sprintf(cmd,"NET_GET:%lu",verify_id);rpc_start(cmd,verify_id,"NET",10000);
-    }
+    if(verify_retry_pending&&RTC_Elapsed_ms(verify_retry_at,verify_retry_delay)){retry_current_stage();return;}
+    if(verify_stage==VERIFY_NET_POLL&&!verify_retry_pending&&!rpc.active&&!rpc.result&&RTC_Elapsed_ms(verify_poll_at,180)){start_net_get();return;}
     if(!rpc.result)return;
     if(rpc.result<0){
-        if(verify_stage==VERIFY_ESP)verify_esp_state=-1;else verify_net_state=-1;
-        str_copy(app_error,sizeof(app_error),verify_stage==VERIFY_ESP?"La ESP32 no responde.":"No se pudo verificar Internet.");
-        verify_stage=VERIFY_FAILED;rpc.result=0;display_dirty=1;return;
+        rpc.result=0;
+        if(verify_stage==VERIFY_ESP||verify_stage==VERIFY_WIFI){
+            int attempt=verify_stage==VERIFY_ESP?verify_esp_attempt:verify_wifi_attempt;
+            if(attempt>=VERIFY_MAX_ATTEMPTS)verify_fail(verify_stage==VERIFY_ESP,verify_stage==VERIFY_ESP?"La ESP32 no responde tras 10 intentos.":"Wi-Fi no se conecto tras 10 intentos.");
+            else schedule_verify_retry(verify_stage,VERIFY_RETRY_DELAY);
+        } else if(verify_stage==VERIFY_NET_BEGIN||verify_stage==VERIFY_NET_POLL){
+            if(++verify_net_transport_failures>=VERIFY_MAX_ATTEMPTS)verify_fail(0,"Enlace UART perdido durante la verificacion.");
+            else schedule_verify_retry(verify_stage,VERIFY_RETRY_DELAY);
+        } else if(verify_stage==VERIFY_NEW){
+            if(verify_new_attempt>=VERIFY_MAX_ATTEMPTS)verify_fail(0,"No se pudo iniciar la sesion tras 10 intentos.");
+            else schedule_verify_retry(VERIFY_NEW,VERIFY_RETRY_DELAY);
+        }
+        return;
     }
     char text[WIRE_CAP],*f[7];str_copy(text,sizeof(text),rpc.response);int n=split_response(text,f,7);rpc.result=0;
-    if(verify_stage==VERIFY_ESP){
+    if(verify_stage==VERIFY_ESP||verify_stage==VERIFY_WIFI){
         uint32_t phase;
         if(n==5&&!strcmp(f[0],"LINK")&&wire_number(f[2],&phase)){
             esp_ok=verify_esp_state=2;wifi_ok=phase==2;
-            if(!wifi_ok){verify_net_state=-1;str_copy(app_error,sizeof(app_error),"Sin Wi-Fi. Conecta primero desde CasioWIFI.");verify_stage=VERIFY_FAILED;}
-            else {verify_net_state=1;verify_stage=VERIFY_NET_BEGIN;verify_id=new_id();char cmd[48];sprintf(cmd,"NET_BEGIN:%lu",verify_id);rpc_start(cmd,verify_id,"NET",10000);}
-        } else {verify_esp_state=-1;verify_stage=VERIFY_FAILED;str_copy(app_error,sizeof(app_error),"Respuesta ESP32 no valida.");}
+            if(wifi_ok){verify_net_state=1;verify_wifi_attempt=0;start_net_begin(1);}
+            else if(verify_stage==VERIFY_WIFI&&verify_wifi_attempt>=VERIFY_MAX_ATTEMPTS)verify_fail(0,"Wi-Fi no se conecto tras 10 intentos.");
+            else {verify_net_state=1;schedule_verify_retry(VERIFY_WIFI,900);}
+        } else {
+            int attempt=verify_stage==VERIFY_ESP?verify_esp_attempt:verify_wifi_attempt;
+            if(attempt>=VERIFY_MAX_ATTEMPTS)verify_fail(verify_stage==VERIFY_ESP,"Respuesta ESP32 no valida tras 10 intentos.");
+            else schedule_verify_retry(verify_stage,VERIFY_RETRY_DELAY);
+        }
     } else if(verify_stage==VERIFY_NET_BEGIN||verify_stage==VERIFY_NET_POLL){
         if(n>=2&&!strcmp(f[0],"NET_DONE")){
-            internet_ok=1;verify_net_state=2;verify_stage=VERIFY_NEW;verify_id=new_id();char cmd[48];sprintf(cmd,"GPT_NEW:%lu",verify_id);rpc_start(cmd,verify_id,"GPT_ACK",8000);
-        } else if(n>=2&&!strcmp(f[0],"NET_WAIT")) {verify_stage=VERIFY_NET_POLL;verify_poll_at=RTC_GetTicks();}
-        else {verify_net_state=-1;verify_stage=VERIFY_FAILED;str_copy(app_error,sizeof(app_error),n>=3&&!strcmp(f[2],"NO_WIFI")?"La ESP32 no esta conectada a Wi-Fi.":"Internet no disponible.");}
+            internet_ok=1;verify_net_state=2;verify_net_transport_failures=0;start_new_attempt(1);
+        } else if(n>=2&&!strcmp(f[0],"NET_WAIT")) {
+            uint32_t attempt,total;
+            if(n>=4&&wire_number(f[2],&attempt)&&wire_number(f[3],&total)){verify_net_attempt=(int)attempt;verify_net_max=(int)total;}
+            verify_net_transport_failures=0;verify_stage=VERIFY_NET_POLL;verify_poll_at=RTC_GetTicks();display_dirty=1;
+        } else if(n>=3&&!strcmp(f[0],"NET_ERROR")&&!strcmp(f[2],"NO_WIFI")&&!verify_wifi_recovery_used){
+            verify_wifi_recovery_used=1;verify_wifi_attempt=0;verify_net_attempt=0;schedule_verify_retry(VERIFY_WIFI,900);
+        } else verify_fail(0,n>=3&&!strcmp(f[0],"NET_ERROR")&&!strcmp(f[2],"NO_WIFI")?"La ESP32 no pudo recuperar Wi-Fi.":"Internet no responde tras 10 intentos.");
     } else if(verify_stage==VERIFY_NEW){
         if(n>=2&&!strcmp(f[0],"GPT_ACK")){verify_stage=VERIFY_READY;display_dirty=1;}
-        else {verify_stage=VERIFY_FAILED;str_copy(app_error,sizeof(app_error),"No se pudo iniciar la sesion.");}
+        else if(verify_new_attempt>=VERIFY_MAX_ATTEMPTS)verify_fail(0,"No se pudo iniciar la sesion tras 10 intentos.");
+        else schedule_verify_retry(VERIFY_NEW,VERIFY_RETRY_DELAY);
     }
 }
 

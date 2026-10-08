@@ -15,6 +15,12 @@ cc -std=gnu11 -O1 -g -fsanitize=address,undefined \
   -I"$ROOT/include" -idirafter /opt/prizmsdk-linux/include \
   "$ROOT/tests/render_ui_test.c" -Wl,--gc-sections -o "$OUT/casiogpt-ui"
 
+cc -std=gnu11 -O1 -g -fsanitize=address,undefined \
+  -ffunction-sections -fdata-sections \
+  -I"$ROOT/include" -idirafter /opt/prizmsdk-linux/include \
+  "$ROOT/tests/verification_test.c" -Wl,--gc-sections -o "$OUT/casiogpt-verification"
+
+"$OUT/casiogpt-verification"
 "$OUT/casiogpt-ui" "$PREVIEWS"
 python3 - "$PREVIEWS" "$ROOT/docs/images" <<'PY'
 from pathlib import Path

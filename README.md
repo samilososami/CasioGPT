@@ -34,7 +34,8 @@ cancelación— y delega únicamente la red a la ESP32 del proyecto
 - Respuesta visible **fragmento a fragmento**, no al terminar.
 - Conversación corta con contexto conservado por el firmware puente.
 - Escritura durante la respuesta y cancelación inmediata con **F6**.
-- Comprobación guiada de archivo de clave, ESP32, Wi-Fi e Internet.
+- Comprobación guiada de archivo de clave, ESP32, Wi-Fi e Internet, con hasta
+  diez intentos automáticos por etapa y progreso visible.
 - API key cargada desde la calculadora, nunca compilada en el `.g3a`.
 - Interfaz nativa de **384×216**, diseñada y probada en una fx-CG50.
 - Modelo actual: `gemma4:31b`, `think: false`, temperatura `0.10` y hasta 220 tokens.
@@ -71,7 +72,10 @@ flowchart LR
 ```
 
 El enlace serie usa frames con checksum FNV-1a, identificadores de petición,
-reintentos y offsets. El firmware procesa el NDJSON conforme llega y devuelve
+reintentos y offsets. Durante el arranque, CasioGPT reabre UART y repite hasta
+diez veces cada fase transitoria; si el Wi-Fi cae durante la comprobación de
+Internet, vuelve a la fase de enlace y deja que el firmware recupere una red
+guardada. El firmware procesa el NDJSON conforme llega y devuelve
 como máximo 64 caracteres por fragmento. Si se repite una petición, el offset
 impide duplicar texto. Al cancelar o salir, se cierra la operación y la clave se
 borra de la RAM usada por el firmware.
@@ -155,7 +159,7 @@ Requiere PrizmSDK en `/opt/prizmsdk-linux` o en `$FXCGSDK`, además de GCC,
 Python 3 y Pillow:
 
 ```bash
-make test       # sanitizadores, cinco renders nativos y detección de secretos
+make test       # recuperación 10/10, sanitizadores, renders y secretos
 make addin      # compila dist/CASIOGPT.g3a
 make checksums  # actualiza dist/checksums.txt
 make all
@@ -171,6 +175,7 @@ límites de confianza están explicados en
 calculator/                         código y recursos del add-in
 include/wire.h                      transporte UART compartido
 tests/render_ui_test.c              render nativo y estados visuales
+tests/verification_test.c           fallos y recuperación de arranque 10/10
 verification/cloud-model-benchmark.json
 docs/images/                        capturas y fotografía real
 dist/CASIOGPT.g3a                   binario publicado

@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.1 — 2026-10-08
+
+- Verificación inicial dividida en enlace ESP32, Wi-Fi, Internet y sesión.
+- Hasta diez intentos automáticos por etapa, con reapertura de UART y progreso
+  visible `N/10`.
+- Recuperación de una red guardada si el Wi-Fi cae durante la prueba HTTPS.
+- Mensajes finales explícitos al agotar los reintentos, sin bloquear la UI.
+- Pruebas de regresión para recuperación en el décimo intento y fallo acotado.
+
 ## v0.1.0 — 2026-10-08
 
 - Primera publicación independiente de CasioGPT.
