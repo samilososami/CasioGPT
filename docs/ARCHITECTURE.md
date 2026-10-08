@@ -45,6 +45,9 @@ para permitir reconexión. En la configuración actual esa NVS no está cifrada.
   interna acotada, sin congelar el bucle gráfico.
 - La pantalla muestra el intento actual (`N/10`) para distinguir una
   recuperación en curso de un bloqueo.
+- Los diez sondeos Wi-Fi cubren aproximadamente 30 segundos. Ese margen permite
+  que el planificador pruebe otra credencial guardada cuando la primera red ya
+  no está disponible.
 - Si HTTPS detecta que el Wi-Fi cayó, CasioGPT vuelve una vez a la fase de
   asociación antes de declarar el fallo definitivo.
 - Offsets inesperados y frames dañados se rechazan.

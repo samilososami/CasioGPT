@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.2 — 2026-10-08
+
+- La fase Wi-Fi conserva diez intentos pero amplía su ventana total a unos 30
+  segundos para permitir el cambio entre redes guardadas.
+- Ajuste motivado por una comprobación física con dos credenciales almacenadas,
+  donde la primera asociación superaba el presupuesto anterior.
+
 ## v0.1.1 — 2026-10-08
 
 - Verificación inicial dividida en enlace ESP32, Wi-Fi, Internet y sesión.

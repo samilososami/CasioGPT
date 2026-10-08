@@ -35,7 +35,8 @@ cancelación— y delega únicamente la red a la ESP32 del proyecto
 - Conversación corta con contexto conservado por el firmware puente.
 - Escritura durante la respuesta y cancelación inmediata con **F6**.
 - Comprobación guiada de archivo de clave, ESP32, Wi-Fi e Internet, con hasta
-  diez intentos automáticos por etapa y progreso visible.
+  diez intentos automáticos por etapa, una ventana Wi-Fi de unos 30 segundos y
+  progreso visible.
 - API key cargada desde la calculadora, nunca compilada en el `.g3a`.
 - Interfaz nativa de **384×216**, diseñada y probada en una fx-CG50.
 - Modelo actual: `gemma4:31b`, `think: false`, temperatura `0.10` y hasta 220 tokens.

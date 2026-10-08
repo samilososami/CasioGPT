@@ -372,6 +372,7 @@ static unsigned long new_id(void){unsigned long id=RTC_GetTicks();if(id<=previou
 /* ---------- verification state ---------- */
 #define VERIFY_MAX_ATTEMPTS 10
 #define VERIFY_RETRY_DELAY 450
+#define VERIFY_WIFI_RETRY_DELAY 3000
 enum { VERIFY_IDLE,VERIFY_ESP,VERIFY_WIFI,VERIFY_NET_BEGIN,VERIFY_NET_POLL,VERIFY_NEW,VERIFY_READY,VERIFY_FAILED };
 static int verify_stage=VERIFY_IDLE,verify_retry_pending,verify_retry_delay,verify_net_transport_failures,verify_wifi_recovery_used;
 static unsigned long verify_id,verify_poll_at,verify_retry_at;
@@ -469,7 +470,7 @@ static void process_verify(void)
             esp_ok=verify_esp_state=2;wifi_ok=phase==2;
             if(wifi_ok){verify_net_state=1;verify_wifi_attempt=0;start_net_begin(1);}
             else if(verify_stage==VERIFY_WIFI&&verify_wifi_attempt>=VERIFY_MAX_ATTEMPTS)verify_fail(0,"Wi-Fi no se conecto tras 10 intentos.");
-            else {verify_net_state=1;schedule_verify_retry(VERIFY_WIFI,900);}
+            else {verify_net_state=1;schedule_verify_retry(VERIFY_WIFI,VERIFY_WIFI_RETRY_DELAY);}
         } else {
             int attempt=verify_stage==VERIFY_ESP?verify_esp_attempt:verify_wifi_attempt;
             if(attempt>=VERIFY_MAX_ATTEMPTS)verify_fail(verify_stage==VERIFY_ESP,"Respuesta ESP32 no valida tras 10 intentos.");
@@ -483,7 +484,7 @@ static void process_verify(void)
             if(n>=4&&wire_number(f[2],&attempt)&&wire_number(f[3],&total)){verify_net_attempt=(int)attempt;verify_net_max=(int)total;}
             verify_net_transport_failures=0;verify_stage=VERIFY_NET_POLL;verify_poll_at=RTC_GetTicks();display_dirty=1;
         } else if(n>=3&&!strcmp(f[0],"NET_ERROR")&&!strcmp(f[2],"NO_WIFI")&&!verify_wifi_recovery_used){
-            verify_wifi_recovery_used=1;verify_wifi_attempt=0;verify_net_attempt=0;schedule_verify_retry(VERIFY_WIFI,900);
+            verify_wifi_recovery_used=1;verify_wifi_attempt=0;verify_net_attempt=0;schedule_verify_retry(VERIFY_WIFI,VERIFY_WIFI_RETRY_DELAY);
         } else verify_fail(0,n>=3&&!strcmp(f[0],"NET_ERROR")&&!strcmp(f[2],"NO_WIFI")?"La ESP32 no pudo recuperar Wi-Fi.":"Internet no responde tras 10 intentos.");
     } else if(verify_stage==VERIFY_NEW){
         if(n>=2&&!strcmp(f[0],"GPT_ACK")){verify_stage=VERIFY_READY;display_dirty=1;}
