@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT="$ROOT/.build/tests"
+PREVIEWS="$OUT/previews"
+
+if [[ "$(id -u)" -eq 0 ]]; then
+  exec runuser -u kali -- env PATH="$PATH" "$0" "$@"
+fi
+
+mkdir -p "$PREVIEWS"
+cc -std=gnu11 -O1 -g -fsanitize=address,undefined \
+  -ffunction-sections -fdata-sections \
+  -I"$ROOT/include" -idirafter /opt/prizmsdk-linux/include \
+  "$ROOT/tests/render_ui_test.c" -Wl,--gc-sections -o "$OUT/casiogpt-ui"
+
+"$OUT/casiogpt-ui" "$PREVIEWS"
+python3 - "$PREVIEWS" "$ROOT/docs/images" <<'PY'
+from pathlib import Path
+import sys
+from PIL import Image
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+destination.mkdir(parents=True, exist_ok=True)
+previews = sorted(source.glob("*.ppm"))
+assert len(previews) == 5, previews
+for preview in previews:
+    image = Image.open(preview)
+    assert image.size == (384, 216)
+    image.save(destination / f"{preview.stem}.png", optimize=True)
+print("PASS render: cinco capturas nativas de 384x216.")
+PY
+
+"$ROOT/tools/check-secrets"

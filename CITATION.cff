@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use or build upon this project, please cite the repository."
+title: "CasioGPT: cloud AI chat for the Casio fx-CG50"
+type: software
+authors:
+  - family-names: "Gonzalez Kamel"
+    given-names: "Sami"
+repository-code: "https://github.com/samilososami/CasioGPT"
+url: "https://github.com/samilososami/CasioGPT"
+license: MIT
+version: 0.1.0
+date-released: 2026-10-08
+keywords:
+  - Casio fx-CG50
+  - Casio Prizm
+  - CasioGPT
+  - XIAO ESP32-C3
+  - Ollama Cloud
+  - g3a add-in
+  - UART
+  - streaming chat

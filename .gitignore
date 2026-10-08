@@ -1,0 +1,14 @@
+.build/
+.device-backups/
+calculator/build/
+calculator/CASIOGPT.bin
+calculator/CASIOGPT.g3a
+casiogpt_api.txt
+device-secrets/
+.env*
+*.o
+*.d
+*.elf
+*.map
+*.ppm
+__pycache__/
