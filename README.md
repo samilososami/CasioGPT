@@ -175,6 +175,7 @@ verification/cloud-model-benchmark.json
 docs/images/                        capturas y fotografía real
 dist/CASIOGPT.g3a                   binario publicado
 tools/                              build, pruebas e instalación segura
+assets/source/                      arte original usado para el splash
 ```
 
 ## Licencia

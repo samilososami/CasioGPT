@@ -42,3 +42,11 @@ Puede indicarse otra ruta con `CASIOGPT_API_FILE=/ruta/privada/clave.txt`.
 El firmware ESP32 no se compila ni se flashea desde este repositorio: usa la
 versión compatible publicada por
 [`cg50-espmod`](https://github.com/samilososami/cg50-espmod).
+
+## Herramientas de verificación opcionales
+
+`tools/evaluate-cloud-models.py` reproduce la batería cloud que motivó la
+selección de `gemma4:31b`. `tools/run-esp32-cloud-probe` instala temporalmente
+una sonda Wi-Fi/TLS en la XIAO y restaura el firmware de `cg50-espmod` incluso
+si la prueba falla. La sonda requiere `CG50_ESPMOD_DIR` cuando el repositorio
+base no está en `/tools/codex/workspace/cg50-espmod`.
